@@ -183,7 +183,7 @@ sub twitter_api_error {
     $kernel->post('logger','log',$heap->{'twitter'}->http_message.' '.$heap->{'twitter'}->http_code.' '.$heap->{'twitter'}->get_error,'debug/twitter_api_error');
   }
 
-  $kernel->post('logger','log',$msg.' ('.$heap->{'twitter'}->http_code .' from Twitter API).',$heap->{'username'});  
+  $kernel->post('logger','log',$msg.' ('.$heap->{'twitter'}->http_code .' from Twitter API).',$heap->{'twitter_username'});  
 
   if ($heap->{'twitter'}->http_code == 400) {
     $msg .= ' Twitter API limit reached.';
@@ -250,25 +250,25 @@ sub tircd_login {
   }
 
   #start up the twitter interface, and see if we can connect with the given NICK/PASS INFO
-  my $twitter = Net::Twitter->new(username => $heap->{'username'}, password => $heap->{'password'}, source => 'tircd');
+  my $twitter = Net::Twitter->new(username => $heap->{'twitter_username'}, password => $heap->{'password'}, source => 'tircd');
   if (!eval { $twitter->verify_credentials() }) {
-    $kernel->post('logger','log','Unable to login to Twitter with the supplied credentials.',$heap->{'username'});
+    $kernel->post('logger','log','Unable to login to Twitter with the supplied credentials.',$heap->{'twitter_username'});
     $kernel->yield('server_reply',462,'Unable to login to Twitter with the supplied credentials.');
     $kernel->yield('shutdown'); #disconnect 'em if we cant
     return;
   }
 
-  $kernel->post('logger','log','Successfully authenticated with Twitter.',$heap->{'username'});
+  $kernel->post('logger','log','Successfully authenticated with Twitter.',$heap->{'twitter_username'});
 
   #stash the twitter object for use in the session  
   $heap->{'twitter'} = $twitter;
 
   #stash the username in a list to keep 'em from rejoining
-  $users{$heap->{'username'}} = 1;
+  $users{$heap->{'twitter_username'}} = 1;
 
   #load our configs from disk if they exist
-  $heap->{'config'}   = eval {retrieve($config{'storage_path'} . '/' . $heap->{'username'} . '.config');};
-  $heap->{'channels'} = eval {retrieve($config{'storage_path'} . '/' . $heap->{'username'} . '.channels');};
+  $heap->{'config'}   = eval {retrieve($config{'storage_path'} . '/' . $heap->{'twitter_username'} . '.config');};
+  $heap->{'channels'} = eval {retrieve($config{'storage_path'} . '/' . $heap->{'twitter_username'} . '.channels');};
 
   my @user_settings = ('update_timeline','update_directs','timeline_count','long_messages','min_length','join_silent','filter_self','shorten_urls','convert_irc_replies');
 
@@ -297,7 +297,7 @@ sub tircd_login {
   $heap->{'ua'}->env_proxy();
 
   #some clients need this shit
-  $kernel->yield('server_reply','001',"Welcome to tircd $heap->{'username'}");
+  $kernel->yield('server_reply','001',"Welcome to tircd $heap->{'irc_username'}");
   $kernel->yield('server_reply','002',"Your host is tircd running version $VERSION");
   $kernel->yield('server_reply','003',"This server was created just for you!");
   $kernel->yield('server_reply','004',"tircd $VERSION i int");
@@ -309,14 +309,15 @@ sub tircd_login {
 sub tircd_connect {
   my ($kernel, $heap) = @_[KERNEL, HEAP];
   $kernel->post('logger','log',$heap->{'remote_ip'}.' connected.');
+  $kernel->post('logger','log',$heap->{'twitter_username'}.' to be tried.');
 }
 
 sub tircd_cleanup {
   my ($kernel, $heap) = @_[KERNEL, HEAP];
-  $kernel->post('logger','log',$heap->{'remote_ip'}.' disconnected.',$heap->{'username'});
+  $kernel->post('logger','log',$heap->{'remote_ip'}.' disconnected.',$heap->{'twitter_username'});
   
   #delete the username
-  delete $users{$heap->{'username'}};
+  delete $users{$heap->{'twitter_username'}};
 
   #remove our timers so the session will die
   $kernel->delay('twitter_timeline');  
@@ -328,10 +329,10 @@ sub tircd_cleanup {
     foreach my $chan (keys %{$heap->{'channels'}}) {
         $heap->{'channels'}->{$chan}->{'joined'} = 0;
     }
-    eval {store($heap->{'config'},$config{'storage_path'} . '/' . $heap->{'username'} . '.config');};
-    eval {store($heap->{'channels'},$config{'storage_path'} . '/' . $heap->{'username'} . '.channels');};
+    eval {store($heap->{'config'},$config{'storage_path'} . '/' . $heap->{'twitter_username'} . '.config');};
+    eval {store($heap->{'channels'},$config{'storage_path'} . '/' . $heap->{'twitter_username'} . '.channels');};
   } else {
-    $kernel->post('logger','log','storage_path is not set or is not writable, not saving configuration.',$heap->{'username'});  
+    $kernel->post('logger','log','storage_path is not set or is not writable, not saving configuration.',$heap->{'twitter_username'});  
   }
   $kernel->yield('shutdown');
 }
@@ -379,7 +380,7 @@ sub irc_reply {
   }
 
   if ($code ne 'PONG' && $code ne 'MODE' && $code != 436) {
-    unshift(@params,$heap->{'username'}); #prepend the target username to the message;
+    unshift(@params,$heap->{'irc_username'}); #prepend the target username to the message;
   }
 
   if ($config{'debug'}) {
@@ -403,7 +404,7 @@ sub irc_pass {
 
 sub irc_nick {
   my ($kernel, $heap, $data) = @_[KERNEL, HEAP, ARG0];
-  if ($heap->{'username'}) { #if we've already got their nick, don't let them change it
+  if ($heap->{'irc_username'}) { #if we've already got their nick, don't let them change it
     $kernel->yield('server_reply',433,'Changing nicks once connected is not currently supported.');    
     return;
   }
@@ -414,9 +415,11 @@ sub irc_nick {
     return;
   }
 
-  $heap->{'username'} = $data->{'params'}[0]; #stash the username for later
+  $heap->{'twitter_username'} = 'asheeshlaroia';
+  $heap->{'irc_username'} = 'paulproteus';
+  # $data->{'params'}[0]; #stash the username for later
 
-  if ($heap->{'username'} && $heap->{'password'} && !$heap->{'twitter'}) {
+  if ($heap->{'twitter_username'} && $heap->{'password'} && !$heap->{'twitter'}) {
     $kernel->yield('login');
   }
 }
@@ -424,7 +427,7 @@ sub irc_nick {
 sub irc_user {
   my ($kernel, $heap, $data) = @_[KERNEL, HEAP, ARG0];
 
-  if ($heap->{'username'} && $heap->{'password'} && !$heap->{'twitter'}) {
+  if ($heap->{'twitter_username'} && $heap->{'password'} && !$heap->{'twitter'}) {
     $kernel->yield('login');
   }
 
@@ -467,13 +470,13 @@ sub irc_join {
     #we might have something saved already, if not prep a new channel
     if (!exists $heap->{'channels'}->{$chan} ) {
       $heap->{'channels'}->{$chan} = {};
-      $heap->{'channels'}->{$chan}->{'names'}->{$heap->{'username'}} = '@';  
+      $heap->{'channels'}->{$chan}->{'names'}->{$heap->{'irc_username'}} = '@';  
     }
     
     $heap->{'channels'}->{$chan}->{'joined'} = 1;
     
     #otherwise, prep a blank channel  
-    $kernel->yield('user_msg','JOIN',$heap->{'username'},$chan);	
+    $kernel->yield('user_msg','JOIN',$heap->{'irc_username'},$chan);	
     $kernel->yield('server_reply',332,$chan,"$chan");
     $kernel->yield('server_reply',333,$chan,'tircd!tircd@tircd',time());
 
@@ -488,7 +491,7 @@ sub irc_join {
     
     #restart the searching
     if ($heap->{'channels'}->{$chan}->{'topic'}) {
-      $kernel->yield('user_msg','TOPIC',$heap->{'username'},$chan,$heap->{'channels'}->{$chan}->{'topic'});
+      $kernel->yield('user_msg','TOPIC',$heap->{'twitter_username'},$chan,$heap->{'channels'}->{$chan}->{'topic'});
       $kernel->yield('twitter_search',$chan);
     }
   }
@@ -500,7 +503,7 @@ sub irc_part {
   
   if ($heap->{'channels'}->{$chan}->{'joined'}) {
     delete $heap->{'channels'}->{$chan};
-    $kernel->yield('user_msg','PART',$heap->{'username'},$chan);
+    $kernel->yield('user_msg','PART',$heap->{'irc_username'},$chan);
   } else {
     $kernel->yield('server_reply',442,$chan,"You're not on that channel");
   }
@@ -532,7 +535,7 @@ sub irc_mode { #ignore all mode requests except ban which is a block (send back 
       if ($mode eq '+b' && $target eq '#twitter') {
         my $user = eval { $heap->{'twitter'}->create_block($nick) };
         if ($user) {
-          $kernel->yield('user_msg','MODE',$heap->{'username'},$target,$mode,$opts);
+          $kernel->yield('user_msg','MODE',$heap->{'irc_username'},$target,$mode,$opts);
         } else {
           if ($heap->{'twitter'}->http_code >= 400) {
             $kernel->call($_[SESSION],'twitter_api_error','Unable to block user.');
@@ -544,7 +547,7 @@ sub irc_mode { #ignore all mode requests except ban which is a block (send back 
       } elsif ($mode eq '-b' && $target eq '#twitter') {
         my $user = eval { $heap->{'twitter'}->destroy_block($nick) };
         if ($user) {
-          $kernel->yield('user_msg','MODE',$heap->{'username'},$target,$mode,$opts);
+          $kernel->yield('user_msg','MODE',$heap->{'irc_username'},$target,$mode,$opts);
         } else {
           if ($heap->{'twitter'}->http_code >= 400) {
             $kernel->call($_[SESSION],'twitter_api_error','Unable to unblock user.');
@@ -561,7 +564,7 @@ sub irc_mode { #ignore all mode requests except ban which is a block (send back 
     return;
   }
   
-  $kernel->yield('user_msg','MODE',$heap->{'username'},$target,'+i');
+  $kernel->yield('user_msg','MODE',$heap->{'irc_username'},$target,'+i');
 }
 
 sub irc_who {
@@ -607,7 +610,7 @@ sub irc_whois {
   }        
 
   if ($friend) {
-    $kernel->post('logger','log',"Received user information for $target from Twitter.",$heap->{'username'});
+    $kernel->post('logger','log',"Received user information for $target from Twitter.",$heap->{'twitter_username'});
     $kernel->yield('server_reply',311,$target,$target,'twitter','*',$friend->{'name'});
     
     #send a bunch of 301s to convey all the twitter info, not sure if this is totally legit, but the clients I tested with seem ok with it
@@ -627,10 +630,10 @@ sub irc_whois {
       $kernel->yield('server_reply',301,$target,"Last Update: ".$friend->{'status'}->{'text'});
     }
 
-    if ($target eq $heap->{'username'}) { #if it's us, then add the rate limit info to
+    if ($target eq $heap->{'twitter_username'}) { #if it's us, then add the rate limit info to
       my $rate = eval { $heap->{'twitter'}->rate_limit_status() };
       $kernel->yield('server_reply',301,$target,'API Usage: '.($rate->{'hourly_limit'}-$rate->{'remaining_hits'})." of $rate->{'hourly_limit'} calls used.");
-      $kernel->post('logger','log','Current API usage: '.($rate->{'hourly_limit'}-$rate->{'remaining_hits'})." of $rate->{'hourly_limit'}",$heap->{'username'});
+      $kernel->post('logger','log','Current API usage: '.($rate->{'hourly_limit'}-$rate->{'remaining_hits'})." of $rate->{'hourly_limit'}",$heap->{'twitter_username'});
     }
 
     #treat their twitter client as the server
@@ -768,22 +771,22 @@ sub irc_privmsg {
     $msg = $update->{'text'};
     
     #update our own friend record
-    my $me = $kernel->call($_[SESSION],'getfriend',$heap->{'username'});
+    my $me = $kernel->call($_[SESSION],'getfriend',$heap->{'twitter_username'});
     $me = $update->{'user'};
     $me->{'status'} = $update;
     $kernel->call($_[SESSION],'updatefriend',$me);
     
     #keep the topic updated with our latest tweet  
-    $kernel->yield('user_msg','TOPIC',$heap->{'username'},$target,"$heap->{'username'}'s last update: $msg");
-    $kernel->post('logger','log','Updated status.',$heap->{'username'});
+    $kernel->yield('user_msg','TOPIC',$heap->{'twitter_username'},$target,"$heap->{'twitter_username'}'s last update: $msg");
+    $kernel->post('logger','log','Updated status.',$heap->{'twitter_username'});
   } else { 
     #private message, it's a dm
     my $dm = eval { $heap->{'twitter'}->new_direct_message({user => $target, text => $msg}) };
     if (!$dm) {
       $kernel->yield('server_reply',401,$target,"Unable to send direct message.  Perhaps $target isn't following you?");
-      $kernel->post('logger','log',"Unable to send direct message to $target",$heap->{'username'});
+      $kernel->post('logger','log',"Unable to send direct message to $target",$heap->{'twitter_username'});
     } else {
-      $kernel->post('logger','log',"Sent direct message to $target",$heap->{'username'});
+      $kernel->post('logger','log',"Sent direct message to $target",$heap->{'twitter_username'});
     }
   }    
 }
@@ -826,7 +829,7 @@ sub irc_invite {
       push(@{$heap->{'friends'}},$user);
       $kernel->yield('server_reply',341,$user->{'screen_name'},$chan);
       $kernel->yield('user_msg','JOIN',$user->{'screen_name'},$chan);
-      $kernel->post('logger','log',"Started following $target",$heap->{'username'});
+      $kernel->post('logger','log',"Started following $target",$heap->{'twitter_username'});
       if ($kernel->call($_[SESSION],'getfollower',$user->{'screen_name'})) {
         $heap->{'channels'}->{$chan}->{'names'}->{$target} = '+';
         $kernel->yield('server_reply','MODE',$chan,'+v',$target);        
@@ -837,14 +840,14 @@ sub irc_invite {
       #show a note if they are protected and we are waiting 
       #this should technically be a 482, but some clients were exiting the channel for some reason
       $kernel->yield('server_reply',481,"$target\'s updates are protected.  Request to follow has been sent.");
-      $kernel->post('logger','log',"Sent request to follow $target",$heap->{'username'});      
+      $kernel->post('logger','log',"Sent request to follow $target",$heap->{'twitter_username'});      
     }
   } else {
     if ($heap->{'twitter'}->http_code >= 400 && $heap->{'twitter'}->http_code != 403) {
       $kernel->call($_[SESSION],'twitter_api_error','Unable to follow user.');    
     } else {
       $kernel->yield('server_reply',401,$target,'No such nick/channel');
-      $kernel->post('logger','log',"Attempted to follow non-existant user $target",$heap->{'username'});      
+      $kernel->post('logger','log',"Attempted to follow non-existant user $target",$heap->{'twitter_username'});      
     }      
   }
 }
@@ -868,7 +871,7 @@ sub irc_kick {
   
   if ($chan ne '#twitter') {
     delete $heap->{'channels'}->{$chan}->{'names'}->{$target};
-    $kernel->yield('user_msg','KICK',$heap->{'username'},$chan,$target,$target);
+    $kernel->yield('user_msg','KICK',$heap->{'irc_username'},$chan,$target,$target);
     return;
   }
   
@@ -876,14 +879,14 @@ sub irc_kick {
   if ($result) {
     $kernel->call($_[SESSION],'remfriend',$target);
     delete $heap->{'channels'}->{$chan}->{'names'}->{$target};
-    $kernel->yield('user_msg','KICK',$heap->{'username'},$chan,$target,$target);
-    $kernel->post('logger','log',"Stoped following $target",$heap->{'username'});
+    $kernel->yield('user_msg','KICK',$heap->{'irc_username'},$chan,$target,$target);
+    $kernel->post('logger','log',"Stoped following $target",$heap->{'twitter_username'});
   } else {
     if ($heap->{'twitter'}->http_code >= 400) {
       $kernel->call($_[SESSION],'twitter_api_error','Unable to unfollow user.');    
     } else {
       $kernel->yield('server_reply',441,$target,$chan,"They aren't on that channel");  
-      $kernel->post('logger','log',"Attempted to unfollow user ($target) we weren't following",$heap->{'username'});
+      $kernel->post('logger','log',"Attempted to unfollow user ($target) we weren't following",$heap->{'twitter_username'});
     }
   }  
 
@@ -921,7 +924,7 @@ sub irc_topic {
   $heap->{'channels'}->{$chan}->{'topic'} = $topic;
   $heap->{'channels'}->{$chan}->{'search_since_id'} = 0;
 
-  $kernel->yield('user_msg','TOPIC',$heap->{'username'},$chan,$topic);  
+  $kernel->yield('user_msg','TOPIC',$heap->{'irc_username'},$chan,$topic);  
   $kernel->yield('twitter_search',$chan);  
 }
 
@@ -972,19 +975,19 @@ sub channel_twitter {
   #cache our friends and followers
   $heap->{'friends'} = \@friends;
   $heap->{'followers'} = \@followers;
-  $kernel->post('logger','log','Received friends list from Twitter, caching '.@{$heap->{'friends'}}.' friends.',$heap->{'username'});
-  $kernel->post('logger','log','Received followers list from Twitter, caching '.@{$heap->{'followers'}}.' followers.',$heap->{'username'});
+  $kernel->post('logger','log','Received friends list from Twitter, caching '.@{$heap->{'friends'}}.' friends.',$heap->{'twitter_username'});
+  $kernel->post('logger','log','Received followers list from Twitter, caching '.@{$heap->{'followers'}}.' followers.',$heap->{'twitter_username'});
 
   #spoof the channel join
-  $kernel->yield('user_msg','JOIN',$heap->{'username'},$chan);	
-  $kernel->yield('server_reply',332,$chan,"$heap->{'username'}'s twitter");
+  $kernel->yield('user_msg','JOIN',$heap->{'irc_username'},$chan);	
+  $kernel->yield('server_reply',332,$chan,"$heap->{'twitter_username'}'s twitter");
   $kernel->yield('server_reply',333,$chan,'tircd!tircd@tircd',time());
   
   #the the list of our users for /NAMES
   my $lastmsg = '';
   foreach my $user (@{$heap->{'friends'}}) {
     my $ov ='';
-    if ($user->{'screen_name'} eq $heap->{'username'}) {
+    if ($user->{'screen_name'} eq $heap->{'irc_username'}) {
       $lastmsg = $user->{'status'}->{'text'};
       $ov = '@';
     } elsif ($kernel->call($_[SESSION],'getfollower',$user->{'screen_name'})) {
@@ -995,10 +998,10 @@ sub channel_twitter {
   }
   
   if (!$lastmsg) { #if we aren't already in the list, add us to the list for NAMES - AND go grab one tweet to put us in the array
-    $heap->{'channels'}->{$chan}->{'names'}->{$heap->{'username'}} = '@';
+    $heap->{'channels'}->{$chan}->{'names'}->{$heap->{'irc_username'}} = '@';
     my $data = eval { $heap->{'twitter'}->user_timeline({count => 1}) };
     if ($data && @$data > 0) {
-      $kernel->post('logger','log','Received user timeline from Twitter.',$heap->{'username'});
+      $kernel->post('logger','log','Received user timeline from Twitter.',$heap->{'twitter_username'});
       my $tmp = $$data[0]->{'user'};
       $tmp->{'status'} = $$data[0];
       $lastmsg = $tmp->{'status'}->{'text'};
@@ -1014,7 +1017,7 @@ sub channel_twitter {
   $kernel->yield('server_reply',353,'=',$chan,$all_users);
   $kernel->yield('server_reply',366,$chan,'End of /NAMES list');
 
-  $kernel->yield('user_msg','TOPIC',$heap->{'username'},$chan,"$heap->{'username'}'s last update: $lastmsg");
+  $kernel->yield('user_msg','TOPIC',$heap->{'irc_username'},$chan,"$heap->{'twitter_username'}'s last update: $lastmsg");
 
   #start our twitter even loop, grab the timeline, replies and direct messages
   $kernel->yield('twitter_timeline',$heap->{'config'}->{'join_silent'}); 
@@ -1045,7 +1048,7 @@ sub twitter_timeline {
   } else {
     #if we got new data save our position
     $heap->{'timeline_since_id'} = @{$timeline}[0]->{'id'};
-    $kernel->post('logger','log','Received '.@$timeline.' timeline updates from Twitter.',$heap->{'username'});
+    $kernel->post('logger','log','Received '.@$timeline.' timeline updates from Twitter.',$heap->{'twitter_username'});
   }
 
   #get updated @replies too
@@ -1063,7 +1066,7 @@ sub twitter_timeline {
     }
   } else {  
     $heap->{'replies_since_id'} = @{$replies}[0]->{'id'};
-    $kernel->post('logger','log','Received '.@$replies.' @replies from Twitter.',$heap->{'username'});
+    $kernel->post('logger','log','Received '.@$replies.' @replies from Twitter.',$heap->{'twitter_username'});
   }
   
   #weave the two arrays together into one stream, removing duplicates
@@ -1094,7 +1097,7 @@ sub twitter_timeline {
     }
     
     #filter out our own messages / don't display if not in silent mode
-    if (($item->{'user'}->{'screen_name'} ne lc($heap->{'username'}) || !$heap->{'config'}->{'filter_self'})) {
+    if (($item->{'user'}->{'screen_name'} ne lc($heap->{'irc_username'}) || !$heap->{'config'}->{'filter_self'})) {
       if (!$silent) {
         foreach my $chan (keys %{$heap->{'channels'}}) {
           if ($chan eq '#twitter' || exists $heap->{'channels'}->{$chan}->{'names'}->{$item->{'user'}->{'screen_name'}}) {
@@ -1129,7 +1132,7 @@ sub twitter_direct_messages {
     }
   } else {
     $heap->{'direct_since_id'} = @{$data}[0]->{'id'};
-    $kernel->post('logger','log','Received '.@$data.' direct messages from Twitter.',$heap->{'username'});
+    $kernel->post('logger','log','Received '.@$data.' direct messages from Twitter.',$heap->{'twitter_username'});
   }
 
   foreach my $item (sort {$a->{'id'} <=> $b->{'id'}} @{$data}) {
@@ -1149,7 +1152,7 @@ sub twitter_direct_messages {
     }
     
     if (!$silent) {
-      $kernel->yield('user_msg','PRIVMSG',$item->{'sender'}->{'screen_name'},$heap->{'username'},$item->{'text'});
+      $kernel->yield('user_msg','PRIVMSG',$item->{'sender'}->{'screen_name'},$heap->{'irc_username'},$item->{'text'});
     }      
   }
 
@@ -1177,12 +1180,12 @@ sub twitter_search {
   } else {
     $heap->{'channels'}->{$chan}->{'search_since_id'} = $data->{'max_id'};
     if (@{$data->{'results'}} > 0) {
-      $kernel->post('logger','log','Received '.@{$data->{'results'}}.' search results from Twitter.',$heap->{'username'});
+      $kernel->post('logger','log','Received '.@{$data->{'results'}}.' search results from Twitter.',$heap->{'twitter_username'});
     }      
   }
 
   foreach my $result (sort {$a->{'id'} <=> $b->{'id'}} @{$data->{'results'}}) {
-    if ($result->{'from_user'} ne $heap->{'username'}) {
+    if ($result->{'from_user'} ne $heap->{'twitter_username'}) {
       $kernel->yield('user_msg','PRIVMSG',$result->{'from_user'},$chan,$result->{'text'});
     }
   }
